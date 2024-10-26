@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.10.0/p5.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.10.0/addons/p5.sound.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <meta charset="utf-8" />
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden; /* Prevent scrolling */
+        }
+        canvas {
+            display: block;
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10; /* Make sure controls are on top of the canvas */
+            background-color: rgba(255, 255, 255, 0.8); /* Slight background for better visibility */
+            padding: 10px;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <p>Angle (0° - 90°)</p>
+        <input type="range" id="angleSlider" min="0" max="90" value="45" />
+        <p>Speed (m/s)</p>
+        <input type="range" id="speedSlider" min="10" max="150" value="75" />
+        <p>Launch Height (px)</p>
+        <input type="range" id="heightSlider" min="0" max="600" value="0" />
+        <p>Gravity (m/s²)</p>
+        <input type="range" id="gravitySlider" min="1" max="20" value="9.81" step="0.1" />
+        <button id="throwButton">Throw!</button>
+        <p id="scoreP">Score: 0</p>
+    </div>
+    <script>
+        let angleSlider, speedSlider, heightSlider, gravitySlider, throwButton;
+        let score = 0;
+        let targetX;
+        let gravity = 9.81; // Default gravity
+        let canvasWidth, canvasHeight;
+
+        let projectile = {
+            x: 50,
+            y: 0,
+            vx: 0,
+            vy: 0,
+            active: false,
+            time: 0
+        };
+
+        let scoreP;
+        let trajectory = [];
+        let explosions = [];
+
+        const timeScale = 2; // Time scaling factor
+
+        function setup() {
+            canvasWidth = windowWidth; // Set canvas width to full window width
+            canvasHeight = windowHeight; // Set canvas height to full window height
+            createCanvas(canvasWidth, canvasHeight);
+            
+            // Create UI elements
+            angleSlider = select('#angleSlider');
+            speedSlider = select('#speedSlider');
+            heightSlider = select('#heightSlider');
+            gravitySlider = select('#gravitySlider');
+            throwButton = select('#throwButton');
+            scoreP = select('#scoreP');
+            
+            throwButton.mousePressed(throwProjectile);
+            resetTarget();
+            
+            textSize(16);
+        }
+
+        function draw() {
+            drawBackground();
+            drawGround();
+            drawTarget();
+            drawLauncher();
+        
+            if (projectile.active) {
+                projectile.time += (deltaTime / 1000) * timeScale;
+
+                // Get the current gravity value from the slider
+                gravity = gravitySlider.value();
+                
+                let initialHeight = heightSlider.value();
+                let y0 = canvasHeight - 10 - initialHeight;
+
+                // Calculate new projectile position using updated gravity
+                projectile.x = projectile.vx * projectile.time + 50;
+                projectile.y = y0 - (projectile.vy * projectile.time - 0.5 * gravity * projectile.time * projectile.time);
+
+                trajectory.push({x: projectile.x, y: projectile.y});
+
+                drawTrajectory();
+                drawProjectile(projectile.x, projectile.y);
+                
+                // Check if projectile has hit the ground or gone out of bounds
+                if (projectile.y >= canvasHeight - 10 || projectile.x > width || projectile.y < 0) {
+                    projectile.active = false;
+                    if (projectile.y >= canvasHeight - 10) {
+                        calculateScore(projectile.x);
+                    }
+                } else {
+                    // Check for target hit
+                    checkTargetHit();
+                }
+            }
+
+            for (let explosion of explosions) {
+                explosion.update();
+                explosion.display();
+            }
+            explosions = explosions.filter(expl => expl.particles.length > 0);
+            
+            fill(0);
+            noStroke();
+            text('Current Angle: ' + angleSlider.value() + '°', 10, 20);
+            text('Current Speed: ' + speedSlider.value() + ' m/s', 10, 40);
+            text('Launch Height: ' + heightSlider.value() + ' px', 10, 60);
+            text('Current Gravity: ' + gravitySlider.value() + ' m/s²', 10, 80);
+        }
+
+        function checkTargetHit() {
+            let distance = abs(targetX - projectile.x);
+            
+            // Check if the projectile has hit the target
+            if (distance < 30 && projectile.y >= canvasHeight - 10) {
+                projectile.active = false; // Deactivate projectile
+                calculateScore(projectile.x); // Increase score
+                resetTarget(); // Reset target position
+                trajectory = []; // Clear the trajectory
+            }
+        }
+
+        function drawBackground() {
+            for (let y = 0; y < canvasHeight; y++) {
+                let inter = map(y, 0, canvasHeight, 0, 1);
+                let c = lerpColor(color('#87CEEB'), color('#228B22'), inter);
+                stroke(c);
+                line(0, y, canvasWidth, y);
+            }
+        
+            drawCloud(150, 80, 60);
+            drawCloud(300, 120, 40);
+            drawCloud(500, 60, 50);
+        }
+
+        function drawCloud(x, y, size) {
+            fill(255, 255, 255, 200);
+            noStroke();
+            ellipse(x, y, size, size * 0.6);
+            ellipse(x + size * 0.5, y - size * 0.3, size, size * 0.6);
+            ellipse(x - size * 0.5, y - size * 0.3, size, size * 0.6);
+        }
+
+        function drawGround() {
+            noStroke();
+            fill(34, 139, 34);
+            rect(0, canvasHeight - 10, canvasWidth, 10);
+            
+            stroke(0, 100, 0);
+            for (let i = 0; i < canvasWidth; i += 20) {
+                line(i, canvasHeight - 10, i + 10, canvasHeight - 30);
+                line(i + 10, canvasHeight - 10, i + 20, canvasHeight - 30);
+            }
+        }
+
+        function drawTarget() {
+            let targetSize = 30;
+            let colors = ['#FF0000', '#FFFFFF', '#FF0000', '#FFFFFF', '#FF0000'];
+            
+            push();
+            translate(targetX, canvasHeight - 10);
+            for (let i = colors.length; i > 0; i--) {
+                fill(colors[i - 1]);
+                noStroke();
+                ellipse(0, 0, targetSize * i, targetSize * i);
+            }
+            pop();
+        }
+
+        function drawLauncher() {
+            let launcherX = 50;
+            let initialHeight = heightSlider.value();
+            let launcherY = canvasHeight - 10 - initialHeight;
+            
+            fill(139, 69, 19);
+            rect(launcherX - 10, launcherY, 20, 10);
+            
+            stroke(0);
+            strokeWeight(2);
+            line(launcherX, launcherY + 10, launcherX, canvasHeight - 10);
+        }
+
+        function drawProjectile(x, y) {
+            push();
+            translate(x, y);
+            
+            let angle = atan2(-projectile.vy, projectile.vx);
+            rotate(angle);
+            
+            stroke(0, 0, 255);
+            strokeWeight(4);
+            line(0, 0, 20, 0);
+            
+            fill(0, 0, 255);
+            noStroke();
+            triangle(20, 0, 15, -5, 15, 5);
+            
+            pop();
+        }
+
+        function drawTrajectory() {
+            noFill();
+            stroke(0, 0, 255, 150);
+            strokeWeight(2);
+            beginShape();
+            for (let pos of trajectory) {
+                vertex(pos.x, pos.y);
+            }
+            endShape();
+        }
+
+        function throwProjectile() {
+            if (projectile.active) {
+                return;
+            }
+            
+            let angle = angleSlider.value();
+            let speed = speedSlider.value();
+            let initialHeight = heightSlider.value();
+            
+            let angleInRadians = radians(angle);
+            
+            projectile.vx = speed * cos(angleInRadians) * 2; 
+            projectile.vy = speed * sin(angleInRadians) * 2;
+            
+            let y0 = canvasHeight - 10 - initialHeight;
+            projectile.x = 50; 
+            projectile.y = y0; 
+            projectile.time = 0; 
+            projectile.active = true; 
+            trajectory = [];
+        }
+
+        function resetTarget() {
+            targetX = random(100, canvasWidth - 100);
+        }
+
+        function calculateScore(x) {
+            let distance = abs(targetX - x);
+            
+            if (distance < 30) {
+                score += 10; // Direct hit
+            } else if (distance < 50) {
+                score += 5; // Near hit
+            } else {
+                score += 1; // Far hit
+            }
+            
+            scoreP.html('Score: ' + score);
+            explosions.push(new Explosion(x, canvasHeight - 10));
+            resetTarget();
+        }
+
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = random(5, 10);
+                this.alpha = 255;
+                this.velocity = createVector(random(-1, 1), random(-2, -1));
+            }
+
+            update() {
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.alpha -= 5; // Fade out effect
+            }
+
+            display() {
+                noStroke();
+                fill(255, 255, 0, this.alpha);
+                ellipse(this.x, this.y, this.size);
+            }
+
+            isAlive() {
+                return this.alpha > 0;
+            }
+        }
+
+        class Explosion {
+            constructor(x, y) {
+                this.particles = [];
+                for (let i = 0; i < 50; i++) {
+                    this.particles.push(new Particle(x, y));
+                }
+            }
+
+            update() {
+                for (let particle of this.particles) {
+                    particle.update();
+                }
+            }
+
+            display() {
+                for (let particle of this.particles) {
+                    particle.display();
+                }
+                this.particles = this.particles.filter(p => p.isAlive());
+            }
+        }
+    </script>
+</body>
+</html>
